@@ -10,8 +10,12 @@ import Foundation
 import FoundationNetworking
 #endif
 
-final public class OpenAI: OpenAIProtocol {
+public protocol OpenAIDelegate: AnyObject {
+    func openAI(_ openAI: OpenAI, didPrepare request: URLRequest) -> URLRequest
+}
 
+final public class OpenAI: OpenAIProtocol {
+    
     public struct Configuration {
         
         /// OpenAI API token. See https://platform.openai.com/docs/api-reference/authentication
@@ -26,11 +30,15 @@ final public class OpenAI: OpenAIProtocol {
         /// Default request timeout
         public let timeoutInterval: TimeInterval
         
-        public init(token: String, organizationIdentifier: String? = nil, host: String = "api.openai.com", timeoutInterval: TimeInterval = 60.0) {
+        /// api paths
+        public let paths: OpenAIPaths
+        
+        public init(token: String, organizationIdentifier: String? = nil, host: String = "api.openai.com", timeoutInterval: TimeInterval = 60.0, paths: OpenAIPaths = OpenAIv1APIPaths()) {
             self.token = token
             self.organizationIdentifier = organizationIdentifier
             self.host = host
             self.timeoutInterval = timeoutInterval
+            self.paths = paths
         }
     }
     
@@ -38,94 +46,99 @@ final public class OpenAI: OpenAIProtocol {
     private var streamingSessions = ArrayWithThreadSafety<NSObject>()
     
     public let configuration: Configuration
-
-    public convenience init(apiToken: String) {
-        self.init(configuration: Configuration(token: apiToken), session: URLSession.shared)
+    public weak var delegate: OpenAIDelegate?
+    
+    public convenience init(apiToken: String, delegate: OpenAIDelegate? = nil) {
+        self.init(configuration: Configuration(token: apiToken), session: URLSession.shared, delegate: delegate)
     }
     
-    public convenience init(configuration: Configuration) {
-        self.init(configuration: configuration, session: URLSession.shared)
+    public convenience init(configuration: Configuration, delegate: OpenAIDelegate? = nil) {
+        self.init(configuration: configuration, session: URLSession.shared, delegate: delegate)
     }
-
-    init(configuration: Configuration, session: URLSessionProtocol) {
+    
+    init(configuration: Configuration, session: URLSessionProtocol, delegate: OpenAIDelegate? = nil) {
         self.configuration = configuration
         self.session = session
+        self.delegate = delegate
     }
-
-    public convenience init(configuration: Configuration, session: URLSession = URLSession.shared) {
-        self.init(configuration: configuration, session: session as URLSessionProtocol)
+    
+    public convenience init(configuration: Configuration, session: URLSession = URLSession.shared, delegate: OpenAIDelegate? = nil) {
+        self.init(configuration: configuration, session: session as URLSessionProtocol, delegate: delegate)
     }
     
     public func completions(query: CompletionsQuery, completion: @escaping (Result<CompletionsResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<CompletionsResult>(body: query, url: buildURL(path: .completions)), completion: completion)
+        performRequest(request: JSONRequest<CompletionsResult>(body: query, url: buildURL(path: configuration.paths.completions)), completion: completion)
     }
     
     public func completionsStream(query: CompletionsQuery, onResult: @escaping (Result<CompletionsResult, Error>) -> Void, completion: ((Error?) -> Void)?) {
-        performStreamingRequest(request: JSONRequest<CompletionsResult>(body: query.makeStreamable(), url: buildURL(path: .completions)), onResult: onResult, completion: completion)
+        performStreamingRequest(request: JSONRequest<CompletionsResult>(body: query.makeStreamable(), url: buildURL(path: configuration.paths.completions)), onResult: onResult, completion: completion)
     }
     
     public func images(query: ImagesQuery, completion: @escaping (Result<ImagesResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<ImagesResult>(body: query, url: buildURL(path: .images)), completion: completion)
+        performRequest(request: JSONRequest<ImagesResult>(body: query, url: buildURL(path: configuration.paths.images)), completion: completion)
     }
     
     public func imageEdits(query: ImageEditsQuery, completion: @escaping (Result<ImagesResult, Error>) -> Void) {
-        performRequest(request: MultipartFormDataRequest<ImagesResult>(body: query, url: buildURL(path: .imageEdits)), completion: completion)
+        performRequest(request: MultipartFormDataRequest<ImagesResult>(body: query, url: buildURL(path: configuration.paths.imageEdits)), completion: completion)
     }
     
     public func imageVariations(query: ImageVariationsQuery, completion: @escaping (Result<ImagesResult, Error>) -> Void) {
-        performRequest(request: MultipartFormDataRequest<ImagesResult>(body: query, url: buildURL(path: .imageVariations)), completion: completion)
+        performRequest(request: MultipartFormDataRequest<ImagesResult>(body: query, url: buildURL(path: configuration.paths.imageVariations)), completion: completion)
     }
     
     public func embeddings(query: EmbeddingsQuery, completion: @escaping (Result<EmbeddingsResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<EmbeddingsResult>(body: query, url: buildURL(path: .embeddings)), completion: completion)
+        performRequest(request: JSONRequest<EmbeddingsResult>(body: query, url: buildURL(path: configuration.paths.embeddings)), completion: completion)
     }
     
     public func chats(query: ChatQuery, completion: @escaping (Result<ChatResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<ChatResult>(body: query, url: buildURL(path: .chats)), completion: completion)
+        performRequest(request: JSONRequest<ChatResult>(body: query, url: buildURL(path: configuration.paths.chats)), completion: completion)
     }
     
     public func chatsStream(query: ChatQuery, onResult: @escaping (Result<ChatStreamResult, Error>) -> Void, completion: ((Error?) -> Void)?) {
-        performStreamingRequest(request: JSONRequest<ChatStreamResult>(body: query.makeStreamable(), url: buildURL(path: .chats)), onResult: onResult, completion: completion)
+        performStreamingRequest(request: JSONRequest<ChatStreamResult>(body: query.makeStreamable(), url: buildURL(path: configuration.paths.chats)), onResult: onResult, completion: completion)
     }
     
     public func edits(query: EditsQuery, completion: @escaping (Result<EditsResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<EditsResult>(body: query, url: buildURL(path: .edits)), completion: completion)
+        performRequest(request: JSONRequest<EditsResult>(body: query, url: buildURL(path: configuration.paths.edits)), completion: completion)
     }
     
     public func model(query: ModelQuery, completion: @escaping (Result<ModelResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<ModelResult>(url: buildURL(path: .models.withPath(query.model)), method: "GET"), completion: completion)
+        performRequest(request: JSONRequest<ModelResult>(url: buildURL(path: configuration.paths.models.withPath(query.model)), method: "GET"), completion: completion)
     }
     
     public func models(completion: @escaping (Result<ModelsResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<ModelsResult>(url: buildURL(path: .models), method: "GET"), completion: completion)
+        performRequest(request: JSONRequest<ModelsResult>(url: buildURL(path: configuration.paths.models), method: "GET"), completion: completion)
     }
     
     @available(iOS 13.0, *)
     public func moderations(query: ModerationsQuery, completion: @escaping (Result<ModerationsResult, Error>) -> Void) {
-        performRequest(request: JSONRequest<ModerationsResult>(body: query, url: buildURL(path: .moderations)), completion: completion)
+        performRequest(request: JSONRequest<ModerationsResult>(body: query, url: buildURL(path: configuration.paths.moderations)), completion: completion)
     }
     
     public func audioTranscriptions(query: AudioTranscriptionQuery, completion: @escaping (Result<AudioTranscriptionResult, Error>) -> Void) {
-        performRequest(request: MultipartFormDataRequest<AudioTranscriptionResult>(body: query, url: buildURL(path: .audioTranscriptions)), completion: completion)
+        performRequest(request: MultipartFormDataRequest<AudioTranscriptionResult>(body: query, url: buildURL(path: configuration.paths.audioTranscriptions)), completion: completion)
     }
     
     public func audioTranslations(query: AudioTranslationQuery, completion: @escaping (Result<AudioTranslationResult, Error>) -> Void) {
-        performRequest(request: MultipartFormDataRequest<AudioTranslationResult>(body: query, url: buildURL(path: .audioTranslations)), completion: completion)
+        performRequest(request: MultipartFormDataRequest<AudioTranslationResult>(body: query, url: buildURL(path: configuration.paths.audioTranslations)), completion: completion)
     }
     
     public func audioCreateSpeech(query: AudioSpeechQuery, completion: @escaping (Result<AudioSpeechResult, Error>) -> Void) {
-        performSpeechRequest(request: JSONRequest<AudioSpeechResult>(body: query, url: buildURL(path: .audioSpeech)), completion: completion)
+        performSpeechRequest(request: JSONRequest<AudioSpeechResult>(body: query, url: buildURL(path: configuration.paths.audioSpeech)), completion: completion)
     }
     
 }
 
 extension OpenAI {
-
+    
     func performRequest<ResultType: Codable>(request: any URLRequestBuildable, completion: @escaping (Result<ResultType, Error>) -> Void) {
         do {
-            let request = try request.build(token: configuration.token, 
-                                            organizationIdentifier: configuration.organizationIdentifier,
-                                            timeoutInterval: configuration.timeoutInterval)
+            let buildRequest = try request.build(token: configuration.token,
+                                                 organizationIdentifier: configuration.organizationIdentifier,
+                                                 timeoutInterval: configuration.timeoutInterval)
+            
+            let request = delegate?.openAI(self, didPrepare: buildRequest) ?? buildRequest
+            
             let task = session.dataTask(with: request) { data, _, error in
                 if let error = error {
                     return completion(.failure(error))
@@ -148,9 +161,12 @@ extension OpenAI {
     
     func performStreamingRequest<ResultType: Codable>(request: any URLRequestBuildable, onResult: @escaping (Result<ResultType, Error>) -> Void, completion: ((Error?) -> Void)?) {
         do {
-            let request = try request.build(token: configuration.token, 
-                                            organizationIdentifier: configuration.organizationIdentifier,
-                                            timeoutInterval: configuration.timeoutInterval)
+            let buildRequest = try request.build(token: configuration.token,
+                                                 organizationIdentifier: configuration.organizationIdentifier,
+                                                 timeoutInterval: configuration.timeoutInterval)
+            
+            let request = delegate?.openAI(self, didPrepare: buildRequest) ?? buildRequest
+            
             let session = StreamingSession<ResultType>(urlRequest: request)
             session.onReceiveContent = {_, object in
                 onResult(.success(object))
@@ -171,9 +187,11 @@ extension OpenAI {
     
     func performSpeechRequest(request: any URLRequestBuildable, completion: @escaping (Result<AudioSpeechResult, Error>) -> Void) {
         do {
-            let request = try request.build(token: configuration.token, 
-                                            organizationIdentifier: configuration.organizationIdentifier,
-                                            timeoutInterval: configuration.timeoutInterval)
+            let buildRequest = try request.build(token: configuration.token,
+                                                 organizationIdentifier: configuration.organizationIdentifier,
+                                                 timeoutInterval: configuration.timeoutInterval)
+            
+            let request = delegate?.openAI(self, didPrepare: buildRequest) ?? buildRequest
             
             let task = session.dataTask(with: request) { data, _, error in
                 if let error = error {
@@ -193,7 +211,6 @@ extension OpenAI {
 }
 
 extension OpenAI {
-    
     func buildURL(path: String) -> URL {
         var components = URLComponents()
         components.scheme = "https"
@@ -203,24 +220,39 @@ extension OpenAI {
     }
 }
 
-typealias APIPath = String
-extension APIPath {
+public protocol OpenAIPaths {
+    var completions: String { get }
+    var embeddings: String { get }
+    var chats: String { get }
+    var edits: String { get }
+    var models: String { get }
+    var moderations: String { get }
+    var audioSpeech: String { get }
+    var audioTranscriptions: String { get }
+    var audioTranslations: String { get }
+    var images: String { get }
+    var imageEdits: String { get }
+    var imageVariations: String { get }
+}
+
+public struct OpenAIv1APIPaths: OpenAIPaths {
+    public let completions = "/v1/completions"
+    public let embeddings = "/v1/embeddings"
+    public let chats = "/v1/chat/completions"
+    public let edits = "/v1/edits"
+    public let models = "/v1/models"
+    public let moderations = "/v1/moderations"
+    public let audioSpeech = "/v1/audio/speech"
+    public let audioTranscriptions = "/v1/audio/transcriptions"
+    public let audioTranslations = "/v1/audio/translations"
+    public let images = "/v1/images/generations"
+    public let imageEdits = "/v1/images/edits"
+    public let imageVariations = "/v1/images/variations"
     
-    static let completions = "/v1/completions"
-    static let embeddings = "/v1/embeddings"
-    static let chats = "/v1/chat/completions"
-    static let edits = "/v1/edits"
-    static let models = "/v1/models"
-    static let moderations = "/v1/moderations"
-    
-    static let audioSpeech = "/v1/audio/speech"
-    static let audioTranscriptions = "/v1/audio/transcriptions"
-    static let audioTranslations = "/v1/audio/translations"
-    
-    static let images = "/v1/images/generations"
-    static let imageEdits = "/v1/images/edits"
-    static let imageVariations = "/v1/images/variations"
-    
+    public init() {}
+}
+
+extension String {
     func withPath(_ path: String) -> String {
         self + "/" + path
     }

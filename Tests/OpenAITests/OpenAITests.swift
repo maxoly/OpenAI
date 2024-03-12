@@ -199,9 +199,10 @@ class OpenAITests: XCTestCase {
     }
     
     func testQueryString() throws {
-        let pathParameter = APIPath.chats
-        let result = APIPath.models.withPath(pathParameter)
-        XCTAssertEqual(result, APIPath.models + "/" + pathParameter)
+        let paths = OpenAIv1APIPaths()
+        let pathParameter = paths.chats
+        let result = paths.models.withPath(pathParameter)
+        XCTAssertEqual(result, paths.models + "/" + pathParameter)
     }
     
     func testRetrieveModel() async throws {
@@ -391,14 +392,14 @@ class OpenAITests: XCTestCase {
     func testDefaultHostURLBuilt() {
         let configuration = OpenAI.Configuration(token: "foo", organizationIdentifier: "bar", timeoutInterval: 14)
         let openAI = OpenAI(configuration: configuration, session: self.urlSession)
-        let chatsURL = openAI.buildURL(path: .chats)
+        let chatsURL = openAI.buildURL(path: configuration.paths.chats)
         XCTAssertEqual(chatsURL, URL(string: "https://api.openai.com/v1/chat/completions"))
     }
     
     func testCustomURLBuilt() {
         let configuration = OpenAI.Configuration(token: "foo", organizationIdentifier: "bar", host: "my.host.com", timeoutInterval: 14)
         let openAI = OpenAI(configuration: configuration, session: self.urlSession)
-        let chatsURL = openAI.buildURL(path: .chats)
+        let chatsURL = openAI.buildURL(path: configuration.paths.chats)
         XCTAssertEqual(chatsURL, URL(string: "https://my.host.com/v1/chat/completions"))
     }
 }
